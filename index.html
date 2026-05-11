@@ -1,0 +1,763 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<link rel="icon" type="image/gif" href="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" />
+<title>Atomic</title>
+<style>
+  :root { --bg: #050015; --accent: #00ffe5; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: var(--bg);
+    color: #fff;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
+    overflow: hidden; user-select: none; touch-action: none;
+    overscroll-behavior: none;
+  }
+  body { border-radius: 24px; overflow: hidden; position: relative; }
+  #stage { position: absolute; inset: 0; display: block; width: 100%; height: 100%; background: var(--bg); }
+
+  .hud {
+    position: absolute; left: 0; right: 0; top: 0;
+    text-align: center; pointer-events: none;
+    padding-top: env(safe-area-inset-top);
+  }
+  .hud .label {
+    margin-top: 22px; font-size: 18px; letter-spacing: 0.32em;
+    color: var(--accent); text-transform: uppercase;
+    text-shadow: 0 0 12px rgba(0,255,229,0.55);
+  }
+  .hud .counter {
+    margin-top: 2px; font-size: 64px; font-weight: 700; line-height: 1;
+    color: #fff; letter-spacing: 0.02em;
+    text-shadow: 0 0 18px rgba(255,255,255,0.55), 0 0 38px rgba(0,255,229,0.4);
+    font-variant-numeric: tabular-nums;
+    transition: transform 0.12s ease, color 0.2s ease;
+  }
+  .hud .counter.burst { transform: scale(1.15); color: #fff; }
+  .hud .best {
+    margin-top: 14px; font-size: 12px; letter-spacing: 0.28em;
+    color: rgba(255,255,255,0.45); text-transform: uppercase;
+  }
+  .hud .best b { color: rgba(255,255,255,0.75); font-weight: 700; }
+  .hud .hint {
+    margin-top: 22px; font-size: 13px; letter-spacing: 0.28em;
+    color: rgba(255,255,255,0.42); text-transform: uppercase;
+    animation: at-pulse 2.4s ease-in-out infinite;
+  }
+  .hud .hint.hidden { opacity: 0; animation: none; transition: opacity 0.5s ease; }
+  .hud .roar {
+    display: none;
+    margin-top: 22px; font-size: 22px; font-weight: 900;
+    color: #ff3300; letter-spacing: 0.28em;
+    text-shadow: 0 0 10px #ff3300, 0 0 20px rgba(255, 51, 0, 0.7);
+    animation: at-pulse 0.7s ease-in-out infinite;
+  }
+  .hud .roar.show { display: block; }
+  @keyframes at-pulse {
+    0%, 100% { opacity: 0.55; }
+    50%      { opacity: 1; }
+  }
+
+  .theme-dots {
+    position: absolute; right: 14px; top: 14px;
+    display: flex; gap: 8px; padding: 8px;
+    pointer-events: auto;
+    padding-top: calc(8px + env(safe-area-inset-top));
+  }
+  .theme-dots .dot {
+    width: 14px; height: 14px; border-radius: 50%;
+    cursor: pointer; opacity: 0.5;
+    transition: transform 0.18s ease, opacity 0.18s ease;
+    box-shadow: 0 0 8px currentColor;
+  }
+  .theme-dots .dot.active { opacity: 1; transform: scale(1.18); }
+  .theme-dots .dot[data-t="prism"]  { background: #00ffe5; color: #00ffe5; }
+  .theme-dots .dot[data-t="sunset"] { background: #ff6a3d; color: #ff6a3d; }
+  .theme-dots .dot[data-t="ocean"]  { background: #4cc3ff; color: #4cc3ff; }
+
+  .credits {
+    position: absolute; left: 0; right: 0; bottom: 16px;
+    text-align: center; color: rgba(255,255,255,0.18);
+    font-size: 11px; letter-spacing: 0.32em; text-transform: uppercase;
+    pointer-events: none; padding-bottom: env(safe-area-inset-bottom);
+  }
+</style>
+</head>
+<body>
+  <canvas id="stage"></canvas>
+
+  <div class="hud">
+    <div class="label">Chain</div>
+    <div class="counter" id="counter">0</div>
+    <div class="best">Best · <b id="best">0</b></div>
+    <div class="hint" id="hint">Tap to ignite</div>
+    <div class="roar" id="roar">CHAIN ON FIRE!</div>
+  </div>
+
+  <div class="theme-dots" id="themeDots">
+    <div class="dot active" data-t="prism"></div>
+    <div class="dot" data-t="sunset"></div>
+    <div class="dot" data-t="ocean"></div>
+  </div>
+
+  <div class="credits">Atomic · One tap, big bang</div>
+
+<script>
+(() => {
+  'use strict';
+
+  // ----- Themes ---------------------------------------------------------------
+  const THEMES = {
+    prism: {
+      hueBase: 0, hueSpread: 360, hueDrift: 18,
+      bg: '#050015', accent: '#00ffe5', root: 261.63,
+    },
+    sunset: {
+      hueBase: 350, hueSpread: 80, hueDrift: 10,
+      bg: '#170306', accent: '#ffb04a', root: 220.00,
+    },
+    ocean: {
+      hueBase: 165, hueSpread: 130, hueDrift: 12,
+      bg: '#020a18', accent: '#4cc3ff', root: 196.00,
+    },
+  };
+
+  // ----- DOM + Canvas --------------------------------------------------------
+  const canvas    = document.getElementById('stage');
+  const ctx       = canvas.getContext('2d');
+  const counterEl = document.getElementById('counter');
+  const bestEl    = document.getElementById('best');
+  const hintEl    = document.getElementById('hint');
+  const roarEl    = document.getElementById('roar');
+  const dotsEl    = document.getElementById('themeDots');
+
+  let W = 0, H = 0, DPR = 1, baseScale = 1;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2.5);
+    W = window.innerWidth; H = window.innerHeight;
+    canvas.width  = Math.floor(W * DPR);
+    canvas.height = Math.floor(H * DPR);
+    canvas.style.width  = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    baseScale = Math.min(W, H) / 414;
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  // ----- Constants ----------------------------------------------------------
+  const ATOM_COUNT       = 48;
+  const ATOM_RADIUS_PX   = 5.5;
+  const CHARGE_TIME      = 0.13;
+  const EXPLODE_LIFETIME = 0.45;
+  const DRIFT_MIN        = 3;
+  const DRIFT_MAX        = 14;
+  const ROAR_THRESHOLD   = 50;            // "ON FIRE" lights up only for serious chains
+
+  function CORE_RADIUS() { return 0.20 * Math.min(W, H); }
+  // Snowball growth: chains usually die in 5-15 because base blast is small
+  // and average-nearest-neighbor distance is roughly the same size. But the
+  // longer a chain runs, the wider its blasts grow — once it gets past gen ~10
+  // the blast radius exceeds the typical neighbor distance and the cascade
+  // runs away. That's the dopamine spike.
+  function ATOM_BLAST_R(gen) {
+    return (0.12 + Math.min(0.10, gen * 0.007)) * Math.min(W, H);
+  }
+
+  // ----- State --------------------------------------------------------------
+  let themeName = 'prism';
+  let theme = THEMES[themeName];
+  let hueT = Math.random() * 360;
+
+  // Atom states: 'idle' | 'charging' | 'exploding' | 'dead'
+  const state = {
+    atoms: [],
+    rings: [],          // explosion rings (visual only)
+    particles: [],
+    chain: 0,
+    chainActive: false,
+    chainEndedAt: 0,
+    awaitingRespawn: false,
+    best: parseInt(localStorage.getItem('atomic.best') || '0', 10) || 0,
+    onFire: false,
+  };
+  bestEl.textContent = state.best;
+
+  function makeAtom() {
+    const a = 0.20 + Math.random() * 0.60;   // never spawn at the very edge
+    const x = a * W;
+    const b = 0.18 + Math.random() * 0.64;
+    const y = b * H;
+    const ang = Math.random() * Math.PI * 2;
+    const spd = (DRIFT_MIN + Math.random() * (DRIFT_MAX - DRIFT_MIN));
+    return {
+      x, y,
+      vx: Math.cos(ang) * spd,
+      vy: Math.sin(ang) * spd,
+      hue: (hueT + Math.random() * 50 - 25) % 360,
+      state: 'idle',
+      chargeT: 0,
+      explodeT: 0,
+      gen: 0,
+      r: ATOM_RADIUS_PX * baseScale,
+      alpha: 0,                              // fades in
+      born: performance.now(),
+    };
+  }
+
+  function initAtoms() {
+    state.atoms = [];
+    for (let i = 0; i < ATOM_COUNT; i++) state.atoms.push(makeAtom());
+  }
+  initAtoms();
+
+  function refillAtoms() {
+    const live = state.atoms.filter(a => a.state !== 'dead').length;
+    const need = ATOM_COUNT - live;
+    for (let i = 0; i < need; i++) state.atoms.push(makeAtom());
+    // sweep dead
+    state.atoms = state.atoms.filter(a => a.state !== 'dead');
+  }
+
+  // ----- Cascade physics -----------------------------------------------------
+  function spawnExplosionRing(x, y, maxR, hue, isCore) {
+    state.rings.push({
+      x, y, r: 0, maxR, age: 0,
+      life: isCore ? 0.55 : EXPLODE_LIFETIME,
+      hue, isCore,
+    });
+  }
+
+  function spawnParticles(x, y, hue, count = 14, energy = 1) {
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const spd = (140 + Math.random() * 220) * energy * baseScale;
+      state.particles.push({
+        x, y,
+        vx: Math.cos(a) * spd,
+        vy: Math.sin(a) * spd,
+        life: 0.45 + Math.random() * 0.5,
+        maxLife: 1,
+        size: (1.6 + Math.random() * 2.2) * baseScale,
+        hue,
+      });
+    }
+  }
+
+  function ignite(atom) {
+    if (atom.state !== 'idle' && atom.state !== 'charging') return;
+    atom.state = 'exploding';
+    atom.explodeT = 0;
+    state.chain++;
+    state.chainActive = true;
+    counterEl.textContent = state.chain.toLocaleString('en-US');
+    counterEl.classList.add('burst');
+    setTimeout(() => counterEl.classList.remove('burst'), 110);
+
+    const blastR = ATOM_BLAST_R(atom.gen);
+    const themedHue = themedHueForRaw(atom.hue);
+    spawnExplosionRing(atom.x, atom.y, blastR, themedHue, false);
+    spawnParticles(atom.x, atom.y, themedHue, 12 + Math.min(atom.gen, 10), 1 + atom.gen * 0.02);
+    audio.pop(atom.gen);
+
+    // On Fire mode (visual flair only)
+    if (state.chain === ROAR_THRESHOLD) {
+      state.onFire = true;
+      roarEl.classList.add('show');
+    }
+    // Glass shatter milestones — kept rare so each one feels like a marker
+    if (state.chain === 25)       audio.glassBreak(0.8);
+    else if (state.chain === 50)  audio.glassBreak(1.2);
+    else if (state.chain === 100) audio.glassBreak(1.7);
+    else if (state.chain === 200) audio.glassBreak(2.2);
+    else if (state.chain > 200 && state.chain % 50 === 0) audio.glassBreak(2.2);
+
+    // Trigger nearby idle atoms
+    for (const other of state.atoms) {
+      if (other === atom || other.state !== 'idle') continue;
+      const dx = other.x - atom.x;
+      const dy = other.y - atom.y;
+      if (dx * dx + dy * dy <= blastR * blastR) {
+        other.state = 'charging';
+        other.chargeT = CHARGE_TIME + Math.random() * 0.04; // slight jitter for organic feel
+        other.gen = atom.gen + 1;
+      }
+    }
+  }
+
+  function fireCore(x, y) {
+    // Initial spark: a big blast that triggers chain-gen-0 atoms.
+    if (state.chainActive || state.awaitingRespawn) return;
+    state.chain = 0;
+    state.onFire = false;
+    roarEl.classList.remove('show');
+    counterEl.textContent = '0';
+    state.chainActive = true;
+
+    const coreR = CORE_RADIUS();
+    const themedHue = themedHueForRaw(hueT);
+    spawnExplosionRing(x, y, coreR, themedHue, true);
+    spawnParticles(x, y, themedHue, 28, 1.4);
+    audio.spark();
+
+    for (const a of state.atoms) {
+      if (a.state !== 'idle') continue;
+      const dx = a.x - x;
+      const dy = a.y - y;
+      if (dx * dx + dy * dy <= coreR * coreR) {
+        a.state = 'charging';
+        a.chargeT = CHARGE_TIME + Math.random() * 0.05;
+        a.gen = 0;
+      }
+    }
+  }
+
+  // ----- Input ---------------------------------------------------------------
+  let interacted = false;
+  function onTap(clientX, clientY) {
+    if (!interacted) {
+      interacted = true;
+      audio.unlock();
+      hintEl.classList.add('hidden');
+    }
+    fireCore(clientX, clientY);
+  }
+  canvas.addEventListener('pointerdown', (e) => onTap(e.clientX, e.clientY));
+
+  // Theme dots
+  dotsEl.addEventListener('pointerdown', (e) => {
+    const t = e.target.closest('.dot');
+    if (!t) return;
+    const name = t.dataset.t;
+    if (!THEMES[name] || name === themeName) return;
+    themeName = name;
+    theme = THEMES[name];
+    document.body.style.background = theme.bg;
+    document.documentElement.style.setProperty('--bg', theme.bg);
+    document.documentElement.style.setProperty('--accent', theme.accent);
+    [...dotsEl.children].forEach(d => d.classList.toggle('active', d.dataset.t === name));
+    audio.onThemeChange();
+  });
+
+  function themedHueForRaw(raw) {
+    const wrapped = ((raw % 360) + 360) % 360;
+    const inBand = (wrapped / 360) * theme.hueSpread;
+    return ((theme.hueBase + inBand) % 360 + 360) % 360;
+  }
+
+  // ----- Audio ---------------------------------------------------------------
+  // Cosmic ambient: a breathing pad with real silent gaps, occasional pentatonic
+  // twinkles, and per-event sounds (pop / spark / glassBreak). NO drum machine,
+  // NO chord progression — the cascade pops themselves are the only rhythm.
+  // This is intentionally different from Layer Pop's synthwave loop: long silences
+  // make each tap feel like a real release.
+  const audio = (() => {
+    let ac = null;
+    let masterGain, padBus, fxGain, delayNode, delayFb, delayWet;
+    let padHandle = null;
+    let breathTimer = null;
+    let twinkleTimer = null;
+    let unlocked = false;
+    let lastPopT = 0;
+
+    const PENTA = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24];
+
+    function ensure() {
+      if (ac) return ac;
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      ac = new AC();
+      masterGain = ac.createGain(); masterGain.gain.value = 0.85; masterGain.connect(ac.destination);
+      // delay bus shared by twinkles + spark tail + some glass shards
+      delayNode = ac.createDelay(1.2);
+      delayNode.delayTime.value = 0.42;     // long-ish for cosmic feel
+      delayFb   = ac.createGain(); delayFb.gain.value = 0.48;
+      delayWet  = ac.createGain(); delayWet.gain.value = 0.38;
+      delayNode.connect(delayFb); delayFb.connect(delayNode);
+      delayNode.connect(delayWet); delayWet.connect(masterGain);
+      padBus = ac.createGain(); padBus.gain.value = 0.6; padBus.connect(masterGain);
+      fxGain = ac.createGain(); fxGain.gain.value = 1;   fxGain.connect(masterGain);
+      return ac;
+    }
+    function unlock() {
+      if (unlocked) return;
+      if (!ensure()) return;
+      if (ac.state !== 'running') ac.resume();
+      unlocked = true;
+      // first pad breath starts after a moment so the initial tap can land
+      // a few pop sounds before the ambient kicks in
+      setTimeout(scheduleBreathCycle, 1200);
+      scheduleTwinkle();
+    }
+
+    // ----- Cosmic pad (3 sines stacked: root, octave, octave+fifth) ---------
+    function buildPad() {
+      const t = ac.currentTime;
+      const out = ac.createGain(); out.gain.value = 0;
+      const filt = ac.createBiquadFilter();
+      filt.type = 'lowpass'; filt.frequency.value = 700; filt.Q.value = 0.7;
+      filt.connect(out);
+      const intervals = [1, 2, 3];          // open voicing — root + oct + oct+fifth
+      const oscs = intervals.map((mult, i) => {
+        const o = ac.createOscillator(); o.type = 'sine';
+        o.frequency.value = theme.root * 0.5 * mult * (1 + (Math.random() - 0.5) * 0.005);
+        const g = ac.createGain();
+        g.gain.value = (1 / intervals.length) * (1 - i * 0.2);
+        o.connect(g); g.connect(filt); o.start(t);
+        return { o, g };
+      });
+      // very slow filter sweep LFO so the pad shimmers without melody
+      const lfo = ac.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 0.05;
+      const lfoGain = ac.createGain(); lfoGain.gain.value = 220;
+      lfo.connect(lfoGain); lfoGain.connect(filt.frequency); lfo.start(t);
+      out.connect(padBus);
+      return { out, filt, oscs, lfo, lfoGain };
+    }
+    function destroyPad(handle, fadeMs = 800) {
+      if (!handle) return;
+      const t = ac.currentTime;
+      handle.out.gain.cancelScheduledValues(t);
+      handle.out.gain.setValueAtTime(handle.out.gain.value, t);
+      handle.out.gain.linearRampToValueAtTime(0, t + fadeMs / 1000);
+      const stopAt = t + fadeMs / 1000 + 0.05;
+      handle.oscs.forEach(({ o }) => { try { o.stop(stopAt); } catch(_){} });
+      try { handle.lfo.stop(stopAt); } catch(_){}
+      setTimeout(() => {
+        try {
+          handle.oscs.forEach(({ o, g }) => { o.disconnect(); g.disconnect(); });
+          handle.lfo.disconnect(); handle.lfoGain.disconnect();
+          handle.filt.disconnect(); handle.out.disconnect();
+        } catch (_) {}
+      }, fadeMs + 200);
+    }
+    // Breathing cycle: rise -> hold -> fall -> silence -> repeat (per memory rule)
+    function scheduleBreathCycle() {
+      if (!ac || !unlocked) return;
+      const rise    = 5 + Math.random() * 3;
+      const hold    = 8 + Math.random() * 8;
+      const fall    = 6 + Math.random() * 4;
+      const silence = 7 + Math.random() * 9;
+      const peak    = 0.05 + Math.random() * 0.03;
+
+      padHandle = buildPad();
+      const h = padHandle;
+      const t = ac.currentTime;
+      h.out.gain.setValueAtTime(0, t);
+      h.out.gain.linearRampToValueAtTime(peak, t + rise);
+      h.out.gain.linearRampToValueAtTime(peak * 0.82, t + rise + hold * 0.5);
+      h.out.gain.linearRampToValueAtTime(peak,        t + rise + hold);
+      h.out.gain.linearRampToValueAtTime(0, t + rise + hold + fall);
+      const teardownIn = (rise + hold + fall) * 1000 + 200;
+      setTimeout(() => { destroyPad(h, 50); padHandle = null; }, teardownIn);
+      breathTimer = setTimeout(scheduleBreathCycle, teardownIn + silence * 1000);
+    }
+
+    // ----- Twinkle: rare high-pentatonic pings through long delay -----------
+    function scheduleTwinkle() {
+      if (!ac || !unlocked) return;
+      const delaySec = 5 + Math.random() * 11;  // every 5–16 seconds
+      twinkleTimer = setTimeout(() => {
+        twinkle();
+        scheduleTwinkle();
+      }, delaySec * 1000);
+    }
+    function twinkle() {
+      if (!ac || !unlocked) return;
+      const t = ac.currentTime;
+      const step = PENTA[Math.floor(Math.random() * 6)];
+      const freq = theme.root * 4 * Math.pow(2, step / 12);
+      const o = ac.createOscillator(); o.type = 'sine'; o.frequency.value = freq;
+      const g = ac.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.07, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+      o.connect(g); g.connect(padBus); g.connect(delayNode);
+      o.start(t); o.stop(t + 0.85);
+    }
+
+    function onThemeChange() {
+      if (!ac || !unlocked) return;
+      if (padHandle) { destroyPad(padHandle, 1200); padHandle = null; }
+      // next breath cycle picks up the new theme.root
+    }
+
+    // ----- Event sounds (pop / spark / glass shatter) -----------------------
+    function pop(gen) {
+      if (!unlocked) return;
+      const now = performance.now();
+      if (now - lastPopT < 18) return;
+      lastPopT = now;
+      const t = ac.currentTime;
+      const stepSemi = PENTA[Math.min(gen, PENTA.length - 1)];
+      const freq = theme.root * Math.pow(2, stepSemi / 12);
+      // Slightly different timbre from Layer Pop: square + sine, brighter filter,
+      // shorter decay so cascade-pops feel like rapid taps not lush chords.
+      const voicing = [freq, freq * 1.4983];
+      voicing.forEach((f, i) => {
+        const o1 = ac.createOscillator(); o1.type = 'square';   o1.frequency.value = f;
+        const o2 = ac.createOscillator(); o2.type = 'sine';     o2.frequency.value = f * 2;
+        const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 5200;
+        const g = ac.createGain();
+        const peak = 0.10 - i * 0.025;
+        g.gain.setValueAtTime(0, t);
+        g.gain.linearRampToValueAtTime(peak, t + 0.004);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.32);
+        o1.connect(lp); o2.connect(lp); lp.connect(g); g.connect(fxGain);
+        if (gen >= 2) g.connect(delayNode);
+        o1.start(t); o2.start(t);
+        o1.stop(t + 0.4); o2.stop(t + 0.4);
+      });
+    }
+    function spark() {
+      if (!unlocked) return;
+      const t = ac.currentTime;
+      // Sub-impact: deep sine that drops in pitch (cinematic "boom") + a
+      // bright triangle ping for the spark itself + delay tail
+      const sub = ac.createOscillator(); sub.type = 'sine';
+      sub.frequency.setValueAtTime(180, t);
+      sub.frequency.exponentialRampToValueAtTime(45, t + 0.55);
+      const subG = ac.createGain();
+      subG.gain.setValueAtTime(0, t);
+      subG.gain.linearRampToValueAtTime(0.28, t + 0.01);
+      subG.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+      sub.connect(subG); subG.connect(fxGain);
+      sub.start(t); sub.stop(t + 0.8);
+
+      const ping = ac.createOscillator(); ping.type = 'triangle';
+      ping.frequency.setValueAtTime(theme.root * 4, t);
+      ping.frequency.exponentialRampToValueAtTime(theme.root * 2, t + 0.4);
+      const pingG = ac.createGain();
+      pingG.gain.setValueAtTime(0, t);
+      pingG.gain.linearRampToValueAtTime(0.16, t + 0.005);
+      pingG.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+      ping.connect(pingG); pingG.connect(fxGain); pingG.connect(delayNode);
+      ping.start(t); ping.stop(t + 0.55);
+    }
+    function glassBreak(intensity = 1) {
+      if (!unlocked) return;
+      const t = ac.currentTime;
+      const shards = 5 + Math.floor(intensity * 6);
+      for (let i = 0; i < shards; i++) {
+        const delay = Math.random() * 0.13;
+        const baseF = 2400 + Math.random() * 4800;
+        const o = ac.createOscillator();
+        o.type = i % 2 === 0 ? 'sine' : 'triangle';
+        o.frequency.setValueAtTime(baseF, t + delay);
+        o.frequency.exponentialRampToValueAtTime(baseF * 0.42, t + delay + 0.16);
+        const g = ac.createGain();
+        const peak = (0.05 + Math.random() * 0.04) * intensity;
+        g.gain.setValueAtTime(0, t + delay);
+        g.gain.linearRampToValueAtTime(peak, t + delay + 0.003);
+        g.gain.exponentialRampToValueAtTime(0.001, t + delay + 0.22);
+        o.connect(g); g.connect(fxGain);
+        if (i < 3) g.connect(delayNode);
+        o.start(t + delay); o.stop(t + delay + 0.26);
+      }
+      const len = Math.floor(ac.sampleRate * 0.20);
+      const buf = ac.createBuffer(1, len, ac.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) {
+        const env = 1 - i / len;
+        data[i] = (Math.random() - 0.5) * 2 * env;
+      }
+      const ns = ac.createBufferSource(); ns.buffer = buf;
+      const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 3200;
+      const bp = ac.createBiquadFilter(); bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(5500, t);
+      bp.frequency.exponentialRampToValueAtTime(2400, t + 0.2);
+      bp.Q.value = 1.4;
+      const ng = ac.createGain();
+      ng.gain.setValueAtTime(0.11 * intensity, t);
+      ng.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+      ns.connect(hp); hp.connect(bp); bp.connect(ng); ng.connect(fxGain);
+      ng.connect(delayNode);
+      ns.start(t);
+    }
+    return { unlock, pop, spark, glassBreak, onThemeChange };
+  })();
+
+  // ----- Update + render -----------------------------------------------------
+  function update(dt) {
+    hueT = (hueT + theme.hueDrift * dt) % 360;
+
+    // Atoms
+    for (let i = 0; i < state.atoms.length; i++) {
+      const a = state.atoms[i];
+      // fade-in
+      if (a.alpha < 1 && a.state === 'idle') a.alpha = Math.min(1, a.alpha + dt * 1.6);
+      if (a.state === 'idle') {
+        a.x += a.vx * dt;
+        a.y += a.vy * dt;
+        const margin = a.r + 4;
+        if (a.x < margin)   { a.x = margin;   a.vx = Math.abs(a.vx); }
+        if (a.x > W - margin) { a.x = W - margin; a.vx = -Math.abs(a.vx); }
+        if (a.y < margin)   { a.y = margin;   a.vy = Math.abs(a.vy); }
+        if (a.y > H - margin) { a.y = H - margin; a.vy = -Math.abs(a.vy); }
+      } else if (a.state === 'charging') {
+        a.chargeT -= dt;
+        if (a.chargeT <= 0) ignite(a);
+      } else if (a.state === 'exploding') {
+        a.explodeT += dt;
+        if (a.explodeT >= EXPLODE_LIFETIME) a.state = 'dead';
+      }
+    }
+
+    // Rings (visual explosions)
+    for (let i = state.rings.length - 1; i >= 0; i--) {
+      const r = state.rings[i];
+      r.age += dt;
+      r.r = r.maxR * Math.min(1, r.age / r.life);
+      if (r.age >= r.life) state.rings.splice(i, 1);
+    }
+
+    // Particles
+    for (let i = state.particles.length - 1; i >= 0; i--) {
+      const p = state.particles[i];
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vy += 60 * dt;
+      const decay = Math.pow(0.93, dt * 60);
+      p.vx *= decay; p.vy *= decay;
+      p.life -= dt;
+      if (p.life <= 0) state.particles.splice(i, 1);
+    }
+
+    // Chain end detection
+    if (state.chainActive) {
+      const active = state.atoms.some(a => a.state === 'charging' || a.state === 'exploding');
+      if (!active) {
+        state.chainActive = false;
+        state.chainEndedAt = performance.now();
+        state.awaitingRespawn = true;
+        if (state.chain > state.best) {
+          state.best = state.chain;
+          localStorage.setItem('atomic.best', String(state.best));
+          bestEl.textContent = state.best;
+        }
+      }
+    }
+    // Respawn after a beat
+    if (state.awaitingRespawn) {
+      if (performance.now() - state.chainEndedAt > 1200) {
+        state.awaitingRespawn = false;
+        refillAtoms();
+        if (state.onFire) {
+          state.onFire = false;
+          roarEl.classList.remove('show');
+        }
+      }
+    }
+  }
+
+  function fillBackground() {
+    ctx.fillStyle = theme.bg;
+    ctx.fillRect(0, 0, W, H);
+    // soft vignette
+    const cx = W / 2, cy = H / 2;
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(W, H) * 0.8);
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(1, 'rgba(0,0,0,0.55)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  function drawAtoms() {
+    for (const a of state.atoms) {
+      const themedHue = themedHueForRaw(a.hue + hueT * 0.4);
+      let r = a.r, alpha = a.alpha;
+      if (a.state === 'charging') {
+        const p = 1 - a.chargeT / CHARGE_TIME;
+        r = a.r * (1 + p * 2.0);
+        alpha = 0.7 + 0.3 * p;
+      } else if (a.state === 'exploding') {
+        const p = a.explodeT / EXPLODE_LIFETIME;
+        r = a.r * (1 + p * 1.4);
+        alpha = (1 - p) * 0.9;
+      } else if (a.state === 'dead') {
+        continue;
+      }
+      const stroke = `hsl(${themedHue}, 90%, 60%)`;
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = stroke;
+      ctx.shadowColor = stroke;
+      ctx.shadowBlur = (a.state === 'charging' ? 22 : 14) * baseScale;
+      ctx.beginPath();
+      ctx.arc(a.x, a.y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+  }
+
+  function drawRings() {
+    for (const r of state.rings) {
+      const p = Math.min(1, r.age / r.life);
+      const alpha = (1 - p) * (r.isCore ? 0.85 : 0.7);
+      const stroke = `hsl(${r.hue}, 92%, 60%)`;
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = (r.isCore ? 5 : 3.5) * baseScale * (1 - p * 0.5);
+      ctx.shadowColor = stroke;
+      ctx.shadowBlur = 18 * baseScale;
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2);
+      ctx.stroke();
+      // bright inner fill flash for core
+      if (r.isCore && p < 0.3) {
+        ctx.globalAlpha = (0.3 - p) * 2;
+        ctx.fillStyle = stroke;
+        ctx.beginPath();
+        ctx.arc(r.x, r.y, r.r * 0.35, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+  }
+
+  function drawParticles() {
+    for (const p of state.particles) {
+      const a = Math.max(0, p.life / p.maxLife);
+      const themedHue = themedHueForRaw(p.hue);
+      ctx.globalAlpha = a;
+      ctx.fillStyle = `hsl(${themedHue}, 90%, 65%)`;
+      ctx.shadowColor = `hsla(${themedHue}, 90%, 65%, 0.6)`;
+      ctx.shadowBlur = 8 * baseScale;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+  }
+
+  // ----- Loop ---------------------------------------------------------------
+  let lastT = performance.now();
+  let running = true;
+  function tick(now) {
+    if (!running) { lastT = now; requestAnimationFrame(tick); return; }
+    const dt = Math.min(0.05, (now - lastT) / 1000);
+    lastT = now;
+    update(dt);
+    fillBackground();
+    drawRings();
+    drawAtoms();
+    drawParticles();
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame((t) => { lastT = t; tick(t); });
+
+  document.addEventListener('visibilitychange', () => {
+    running = document.visibilityState === 'visible';
+    lastT = performance.now();
+  });
+})();
+</script>
+</body>
+</html>
