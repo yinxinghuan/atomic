@@ -1,6 +1,8 @@
 <!doctype html>
 <html lang="en">
 <head>
+    <meta name="game-uuid" content="11d74d8f-be44-4644-8828-3d3f3e927d84" />
+
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -8,6 +10,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <link rel="icon" type="image/gif" href="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" />
 <title>Atomic</title>
+<script src="./aigram-bridge.js"></script>
 <style>
   :root { --bg: #050015; --accent: #00ffe5; }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -195,99 +198,53 @@
 // ====== Leaderboard module — sets window.GG_LB ======
 (function () {
   'use strict';
-  const GAMES_API = 'https://games-api.xinghuan-yin.workers.dev';
+  // Talks to Aigram platform via window.Aigram (see aigram-bridge.js).
   const GAME_ID   = 'atomic';
   const GAME_NAME = 'ATOMIC';
 
-  const params     = new URLSearchParams(window.location.search);
-  const telegramId = params.get('telegram_id') || null;
-  const rawOrigin  = params.get('api_origin');
-  const apiOrigin  = rawOrigin ? decodeURIComponent(rawOrigin) : null;
-  const isInAigram = !!(telegramId && apiOrigin);
+  const A = window.Aigram;
+  const { telegramId, apiOrigin, isInAigram, gameUuid, callAigramAPI, openAigramProfile } = A;
 
   let currentUser = null;
-  const toBase64   = s => btoa(unescape(encodeURIComponent(s)));
-  const fromBase64 = s => decodeURIComponent(escape(atob(s)));
 
-  function callAigramAPI(url) {
-    return new Promise((resolve, reject) => {
-      const id = (crypto.randomUUID && crypto.randomUUID()) || (Date.now() + '-' + Math.random());
-      const target = new URL(apiOrigin).origin;
-      let timer;
-      const handler = (e) => {
-        if (e.origin !== target) return;
-        const msg = typeof e.data === 'string' ? e.data : '';
-        if (!msg.startsWith('callAPIResult-')) return;
-        try {
-          const r = JSON.parse(fromBase64(msg.slice('callAPIResult-'.length)));
-          if (r.request_id !== id) return;
-          window.removeEventListener('message', handler);
-          clearTimeout(timer);
-          if (r.success) resolve(r.data); else reject(new Error(r.error || 'API error'));
-        } catch (_) {}
-      };
-      window.addEventListener('message', handler);
-      window.parent.postMessage(
-        `callAPI-${toBase64(JSON.stringify({ url, method: 'GET', data: null, request_id: id, emitter: window.location.origin }))}`,
-        target
-      );
-      timer = setTimeout(() => { window.removeEventListener('message', handler); reject(new Error('timeout')); }, 10000);
-    });
-  }
-
-  if (isInAigram) {
+  if (isInAigram && telegramId) {
     callAigramAPI(`/note/telegram/user/get/info/by/telegram_id?telegram_id=${telegramId}`)
       .then(res => { currentUser = (res && res.data) ? res.data : res; })
       .catch(() => {});
   }
 
   async function submitScore(score) {
-    if (!telegramId || !(score > 0)) return;
+    if (!A.canRank || !(score > 0)) return;
     try {
-      await fetch(`${GAMES_API}/score`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          game_id: GAME_ID,
-          telegram_id: telegramId,
-          name: (currentUser && currentUser.name) || telegramId,
-          avatar_url: (currentUser && currentUser.head_url) || '',
-          score: Math.floor(score),
-        }),
-      });
+      await callAigramAPI(
+        '/note/aigram/ai/game/rank/score/save',
+        'POST',
+        { session_id: gameUuid, score: Math.floor(score) }
+      );
     } catch (_) {}
   }
 
   async function fetchGlobal() {
+    if (!A.canRank) return [];
     try {
-      const res = await fetch(`${GAMES_API}/leaderboard?game_id=${GAME_ID}&limit=50`);
-      const json = await res.json();
-      return (json.leaderboard || []).map(e => Object.assign({}, e, { isMe: String(e.telegram_id) === String(telegramId) }));
+      const r = await callAigramAPI(
+        `/note/aigram/ai/game/rank/score/list/by/session_id?session_id=${encodeURIComponent(gameUuid)}`
+      );
+      const rows = (r && Array.isArray(r.data)) ? r.data : (Array.isArray(r) ? r : []);
+      return rows.map(row => ({
+        telegram_id: String(row.user_id),
+        name: row.user_name,
+        avatar_url: row.head_url,
+        score: Number(row.score),
+        rank: row.rank,
+        isMe: String(row.user_id) === String(telegramId),
+      }));
     } catch (_) { return []; }
   }
 
-  async function fetchFriends() {
-    if (!isInAigram) return [];
-    const ids = new Set([String(telegramId)]);
-    try {
-      const contacts = await callAigramAPI(`/note/telegram/user/contact/list?telegram_id=${telegramId}`);
-      const list = Array.isArray(contacts) ? contacts : (contacts && contacts.data) || [];
-      list.forEach(f => { if (f && f.telegram_id) ids.add(String(f.telegram_id)); });
-    } catch (_) {}
-    try {
-      const res = await fetch(`${GAMES_API}/leaderboard?game_id=${GAME_ID}&telegram_ids=${encodeURIComponent([...ids].join(','))}`);
-      const json = await res.json();
-      return (json.leaderboard || []).map(e => Object.assign({}, e, { isMe: String(e.telegram_id) === String(telegramId) }));
-    } catch (_) { return []; }
-  }
+  async function fetchFriends() { return []; }
 
-  function openProfile(tid) {
-    if (!apiOrigin) return;
-    try {
-      const enc = btoa(JSON.stringify({ id: tid }));
-      window.parent.postMessage(`AW.PROFILE.OPEN-${enc}`, new URL(apiOrigin).origin);
-    } catch (_) {}
-  }
+  function openProfile(tid) { openAigramProfile(tid); }
 
   // ----- UI -----
   const zh = (navigator.language || '').toLowerCase().startsWith('zh');
@@ -330,7 +287,7 @@
     if (isInAigram) {
       const tabRow = document.createElement('div');
       tabRow.className = 'gg-lb-tabs';
-      ['global','friends'].forEach(key => {
+      ['global'].forEach(key => {
         const b = document.createElement('button');
         b.type = 'button';
         b.className = 'gg-lb-tab' + (key === 'global' ? ' active' : '');
