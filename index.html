@@ -224,6 +224,54 @@
     } catch (_) {}
   }
 
+  // ── Leaderboard-beat 1:1 notify (score_beat) — see aigram-notify skill ──
+  let preRunBest = 0;
+  const notifiedTargets = new Set();
+  function snapshotPreRunBest() {
+    notifiedTargets.clear();
+    if (!A.canRank || !telegramId) { preRunBest = 0; return; }
+    callAigramAPI('/note/aigram/ai/game/rank/score/list/by/session_id?session_id=' + gameUuid, 'GET')
+      .then(res => {
+        const rows = Array.isArray(res) ? res : (res && res.data) || [];
+        const meId = String(telegramId);
+        const me = rows.find(r => String(r.user_id) === meId);
+        preRunBest = me ? Number(me.score) || 0 : 0;
+      }).catch(() => { preRunBest = 0; });
+  }
+  async function notifyBeat(myScore) {
+    if (!A.canRank || !telegramId) return;
+    if (myScore <= preRunBest) return;
+    try {
+      const res = await callAigramAPI(
+        '/note/aigram/ai/game/rank/score/list/by/session_id?session_id=' + gameUuid, 'GET');
+      const rows = Array.isArray(res) ? res : (res && res.data) || [];
+      const meId = String(telegramId);
+      const beaten = rows
+        .filter(r => String(r.user_id) !== meId)
+        .map(r => ({ id: String(r.user_id), score: Number(r.score) || 0 }))
+        .filter(r => r.score < myScore && r.score > preRunBest && !notifiedTargets.has(r.id))
+        .sort((a, b) => b.score - a.score)[0];
+      if (!beaten) return;
+      notifiedTargets.add(beaten.id);
+      A.postAigramAPI('/note/aigram/ai/game/record/play', {
+        session_id: gameUuid,
+        event: 'score_beat',
+        config_json: { actions: [{
+          type: 'notify',
+          target_user_id: beaten.id,
+          image: {
+            ref_url: 'https://yinxinghuan.github.io/games/posters/atomic.png',
+            prompt: 'Glowing atoms chain-exploding outward in a dark void with neon ring shockwaves.',
+          },
+          message: {
+            template: '{sender_name} just out-chained you — ' + Math.round(myScore) + ' on ATOMIC.',
+            variables: ['sender_name'],
+          },
+        }] },
+      });
+    } catch (_) {}
+  }
+
   async function fetchGlobal() {
     if (!A.canRank) return [];
     try {
@@ -382,7 +430,7 @@
   const tbtn = document.getElementById('lbToggleBtn');
   if (tbtn) tbtn.addEventListener('pointerdown', show);
 
-  window.GG_LB = { isInAigram, submitScore, show, hide };
+  window.GG_LB = { isInAigram, submitScore, show, hide, snapshotPreRunBest, notifyBeat };
 })();
 </script>
 
@@ -577,6 +625,7 @@
     roarEl.classList.remove('show');
     counterEl.textContent = '0';
     state.chainActive = true;
+    if (window.GG_LB && window.GG_LB.snapshotPreRunBest) window.GG_LB.snapshotPreRunBest();
 
     const coreR = CORE_RADIUS();
     const themedHue = themedHueForRaw(hueT);
@@ -919,6 +968,7 @@
           bestEl.textContent = state.best;
         }
         if (window.GG_LB) window.GG_LB.submitScore(state.chain);
+        if (window.GG_LB && window.GG_LB.notifyBeat) window.GG_LB.notifyBeat(state.chain);
       }
     }
     // Respawn after a beat
