@@ -149,6 +149,11 @@
   .gg-lb-tab.active { background: rgba(0,255,229,0.16); color: #fff; }
   .gg-lb-body { flex: 1; overflow-y: auto; min-height: 200px; -webkit-overflow-scrolling: touch; }
   .gg-lb-state { padding: 48px 12px; text-align: center; color: rgba(255,255,255,0.45); font-size: 13px; }
+
+  .gg-lb-state--download { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; }
+  .gg-lb-state__icon { font-size:34px; line-height:1; }
+  .gg-lb-state__download { display:inline-flex; align-items:center; justify-content:center; min-height:40px; padding:0 16px; border-radius:999px; border:1px solid rgba(255,255,255,0.28); background:rgba(255,255,255,0.12); color:#fff; text-decoration:none; font-weight:700; letter-spacing:0; -webkit-tap-highlight-color:transparent; }
+  .gg-lb-state__download:active { transform:scale(.97); background:rgba(255,255,255,0.18); }
   .gg-lb-row {
     display: flex; align-items: center; gap: 10px;
     padding: 9px 10px; border-radius: 12px; margin-bottom: 4px;
@@ -295,12 +300,13 @@
   function openProfile(tid) { openAigramProfile(tid); }
 
   // ----- UI -----
+  const ALTERU_APP_URL = 'https://apps.apple.com/app/id6769646546';
   const zh = (navigator.language || '').toLowerCase().startsWith('zh');
   const S = zh
     ? { title:'排行榜', global:'🌍 全局榜', friends:'👥 好友榜', me:'我',
-        empty:'暂无记录，快来第一个上榜！', emptyFriends:'好友还未上榜，快来邀请他们！', loading:'加载中…' }
+        empty:'暂无记录，快来第一个上榜！', emptyFriends:'好友还未上榜，快来邀请他们！', loading:'加载中…', openInAlterU:'在 AlterU 中打开即可查看排行榜', downloadAlterU:'下载 AlterU' }
     : { title:'Leaderboard', global:'🌍 Global', friends:'👥 Friends', me:'me',
-        empty:'No records yet. Be the first!', emptyFriends:'No friends on the board yet.', loading:'Loading…' };
+        empty:'No records yet. Be the first!', emptyFriends:'No friends on the board yet.', loading:'Loading…', openInAlterU:'Open in AlterU to view the leaderboard.', downloadAlterU:'Get AlterU on the App Store' };
   const MEDALS = ['🥇','🥈','🥉'];
   const MEDAL_COLORS = ['#FFD700','#C0C0C0','#CD7F32'];
 
@@ -360,6 +366,27 @@
     Object.keys(tabs).forEach(k => tabs[k].classList.toggle('active', k === currentTab));
   }
 
+
+  function renderDownload() {
+    if (!body) return;
+    body.innerHTML = '';
+    const state = document.createElement('div');
+    state.className = 'gg-lb-state gg-lb-state--download';
+    const icon = document.createElement('span');
+    icon.className = 'gg-lb-state__icon';
+    icon.textContent = '🏆';
+    const text = document.createElement('span');
+    text.textContent = S.openInAlterU;
+    const link = document.createElement('a');
+    link.className = 'gg-lb-state__download';
+    link.href = ALTERU_APP_URL;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = S.downloadAlterU;
+    state.append(icon, text, link);
+    body.appendChild(state);
+  }
+
   function render(entries) {
     if (!body) return;
     body.innerHTML = '';
@@ -374,7 +401,7 @@
       const row = document.createElement('div');
       const top = i < 3;
       row.className = 'gg-lb-row' + (top ? ' top' : '') + (e.isMe ? ' me' : '') + (isInAigram ? ' clickable' : '');
-      if (isInAigram) row.addEventListener('pointerdown', () => openProfile(e.telegram_id));
+      if (isInAigram) row.addEventListener('click', () => openProfile(e.telegram_id));
 
       const rank = document.createElement('div');
       if (top) { rank.className = 'gg-lb-rank medal'; rank.textContent = MEDALS[i]; rank.style.color = MEDAL_COLORS[i]; }
@@ -413,6 +440,7 @@
   }
 
   async function refresh() {
+    if (!isInAigram) { renderDownload(); return; }
     body.innerHTML = `<div class="gg-lb-state">${esc(S.loading)}</div>`;
     const data = currentTab === 'friends' ? await fetchFriends() : await fetchGlobal();
     render(data);
