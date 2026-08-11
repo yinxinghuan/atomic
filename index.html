@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="en">
 <head>
+    <script src="./alteru-storage-scope.js" data-alteru-storage-scope data-game-storage-id="11d74d8f-be44-4644-8828-3d3f3e927d84"></script>
     <meta name="game-uuid" content="11d74d8f-be44-4644-8828-3d3f3e927d84" />
 
 <meta charset="UTF-8" />
@@ -539,7 +540,7 @@
     chainActive: false,
     chainEndedAt: 0,
     awaitingRespawn: false,
-    best: parseInt(localStorage.getItem('atomic.best') || '0', 10) || 0,
+    best: parseInt(alteruLocalStorage.getItem('atomic.best') || '0', 10) || 0,
     onFire: false,
   };
   bestEl.textContent = state.best;
@@ -993,7 +994,7 @@
         state.awaitingRespawn = true;
         if (state.chain > state.best) {
           state.best = state.chain;
-          localStorage.setItem('atomic.best', String(state.best));
+          alteruLocalStorage.setItem('atomic.best', String(state.best));
           bestEl.textContent = state.best;
         }
         if (window.GG_LB) window.GG_LB.submitScore(state.chain);
